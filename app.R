@@ -1,5 +1,6 @@
 library(shiny)
 library(data.table)
+library(VennDiagram)
 
 ui <- fluidPage(
     navbarPage("Type Explorer", id="nav",
@@ -25,8 +26,8 @@ ui <- fluidPage(
       ),
       
       tabPanel("Venn Diagrams",
-        uiOutput('vennSetCheckBox')
-#         plotOutput('vennPlot')),
+        uiOutput('vennSetCheckBox'),
+        plotOutput('vennPlot')
       )
    )
 )
@@ -78,7 +79,20 @@ server <- function(input, output){
     checkboxGroupInput(inputId = 'vennCheckBox', label="Choose sets to compare",
                        choices = options)
   })
-   
+  
+  output$vennPlot <- renderPlot({
+    sets = list()
+    i <- 1
+    for (set in input$vennCheckBox){
+      isolates <- isolateData()[isolateData()[[2]]==set,][[1]]
+      setCoverage <- colSums(otuData()[,colnames(otuData) %in% isolates])
+      sets[i] <- rownames(setCoverage[setCoverage>0])
+      print(sets)
+      i <- i+1
+    }
+    names(sets) <- input$vennCheckBox
+    venn.diagram(sets, filename=NULL)
+  })
 }
 
 shinyApp(ui = ui, server = server)
