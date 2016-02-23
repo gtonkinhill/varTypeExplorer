@@ -36,8 +36,10 @@ ui <- fluidPage(
               uiOutput('vennSetCheckBox2')
             ),
             mainPanel(
+                tableOutput('summaryTable'),
                 imageOutput('vennPlot'),
-                plotOutput('frequencyPlot')
+                plotOutput('frequencyPlot'),
+                plotOutput('cummulativePLot')
             )
           )
         )
@@ -99,9 +101,9 @@ server <- function(input, output, session){
                        choices = options, selected=options[1])
   })
   
+  isolates <- reactive({isolateData()[isolateData()[[input$vennCheckBox1]] %in% input$vennCheckBox2,][[1]]})
   
-  output$vennPlot <- renderImage({
-    #Generate venn image
+  sets <- reactive({
     sets = list()
     i <- 1
     for (set in input$vennCheckBox2){
@@ -111,6 +113,27 @@ server <- function(input, output, session){
       i <- i+1
     }
     names(sets) <- input$vennCheckBox2
+    sets
+  })
+  
+  otuFreqs <- reactive ({data.frame(otuOccurenceCounts=rowSums(otuData()[,isolates(), with = FALSE]))})
+  
+  
+  output$summaryTable <- renderTable({
+    
+    print(sets())
+    print(length(Reduce(intersect, sets())))
+    inter <- length(Reduce(intersect, sets()))
+    
+    relate <- inter/mean(as.numeric(lapply(sets(), length)))
+    
+    data.frame(Total_Isolates=length(isolates()), Total_DBLa_Types=length(otuFreqs()),
+               Largest_OTU=max(otuFreqs()), relatedness=relate)
+  })
+  
+  output$vennPlot <- renderImage({
+    #Generate venn image
+    sets <- sets()
 
     # This file will be removed later by renderImage
     outfile <- tempfile(fileext='.png')
@@ -131,13 +154,26 @@ server <- function(input, output, session){
   
   
   output$frequencyPlot <- renderPlot({
-    isolates <- isolateData()[isolateData()[[input$vennCheckBox1]] %in% input$vennCheckBox2,][[1]]
-    otuFreqs <- data.frame(otuOccurenceCounts=rowSums(otuData()[,isolates, with = FALSE]))
+    isolates <- isolates()
+    otuFreqs <- otuFreqs()
     
     gg <- ggplot(otuFreqs, aes(x=otuOccurenceCounts))
     gg <- gg + geom_histogram(binwidth=1)
     gg <- gg + theme_bw()
     gg <- gg + scale_y_sqrt()
+    gg
+    })
+  
+  output$cummulativePLot <- renderPlot({
+    isolates <- isolates()
+    otus <- otuData()[,isolates, with = FALSE]
+    cummulative <- data.frame(number=1:ncol(otus), cummulative=colSums(t(apply(otus, 1, cumsum))>0))
+  
+    gg <- ggplot(data=cummulative, aes(x=number, y=cummulative))
+    gg <- gg + geom_line()
+    gg <- gg + geom_point()
+    gg <- gg + theme_bw() 
+    gg <- gg + xlab("Number of isolates") + ylab("Cumulative total number of DBLalpha types")
     gg
     })
   
