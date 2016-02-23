@@ -26,8 +26,9 @@ ui <- fluidPage(
       ),
       
       tabPanel("Venn Diagrams",
-        uiOutput('vennSetCheckBox'),
-        plotOutput('vennPlot')
+        uiOutput('vennSetCheckBox1'),
+        uiOutput('vennSetCheckBox2'),
+        imageOutput('vennPlot')
       )
    )
 )
@@ -74,25 +75,41 @@ server <- function(input, output){
     isolateData()
   })
   
-  output$vennSetCheckBox <- renderUI({
+  output$vennSetCheckBox2 <- renderUI({
     options <- unique(isolateData()[[2]])
     checkboxGroupInput(inputId = 'vennCheckBox', label="Choose sets to compare",
                        choices = options)
   })
   
-  output$vennPlot <- renderPlot({
+  output$vennSetCheckBox2 <- renderUI({
+    options <- unique(isolateData()[[2]])
+    checkboxGroupInput(inputId = 'vennCheckBox', label="Choose sets to compare",
+                       choices = options)
+  })
+  
+  
+  output$vennPlot <- renderImage({
+    #Generate venn image
     sets = list()
     i <- 1
     for (set in input$vennCheckBox){
       isolates <- isolateData()[isolateData()[[2]]==set,][[1]]
-      setCoverage <- colSums(otuData()[,colnames(otuData) %in% isolates])
-      sets[i] <- rownames(setCoverage[setCoverage>0])
-      print(sets)
+      setCoverage <- rowSums(otuData()[,isolates, with = FALSE])
+      sets[[i]] <- otuData()[[1]][setCoverage>0]
       i <- i+1
     }
     names(sets) <- input$vennCheckBox
-    venn.diagram(sets, filename=NULL)
-  })
+
+    # This file will be removed later by renderImage
+    outfile <- tempfile(fileext='.png')
+    
+    venn.diagram(sets, filename=outfile, imagetype="png")
+    list(src = outfile,
+         contentType = 'image/png',
+         width = 400,
+         height = 300,
+         alt = "This is alternate text")
+  }, deleteFile = TRUE)
 }
 
 shinyApp(ui = ui, server = server)
