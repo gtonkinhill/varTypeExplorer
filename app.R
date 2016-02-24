@@ -1,12 +1,18 @@
 library(shiny)
+library(shinythemes)
 library(data.table)
 library(VennDiagram)
 library(ggplot2)
 library(dplyr)
 
+library(leaflet)
+library(RColorBrewer)
+library(scales)
+library(lattice)
+
 colours5 <- c("#e41a1c","#377eb8","#4daf4a","#984ea3","#ff7f00")
 
-ui <- fluidPage(
+ui <- fluidPage(theme = shinytheme("flatly"),
     navbarPage("Type Explorer", id="nav",
                            
       tabPanel("Inputs",                         
@@ -55,18 +61,20 @@ ui <- fluidPage(
             includeScript("gomap.js")
           ),
                    
-          leafletOutput("map", width="100%", height="100%"),
+          leafletOutput("map", width="100%", height="100%")#,
+          
+#           # Shiny versions prior to 0.11 should use class="modal" instead.
+#           absolutePanel(id = "controls", class = "panel panel-default", fixed = TRUE,
+#                         draggable = TRUE, top = 60, left = "auto", right = 20, bottom = "auto",
+#                         width = 330, height = "auto",
+#                         
+#                         h2("Summary plots")
+#     
+# #                         plotOutput("histCentile", height = 200),
+# #                         plotOutput("scatterCollegeIncome", height = 250)
+#           )
                    
-          # Shiny versions prior to 0.11 should use class="modal" instead.
-          absolutePanel(id = "controls", class = "panel panel-default", fixed = TRUE,
-            draggable = TRUE, top = 60, left = "auto", right = 20, bottom = "auto",
-            width = 330, height = "auto",
-                                 
-            h2("Summary plots"),
-                                                   
-#             plotOutput("histCentile", height = 200),
-#             plotOutput("scatterCollegeIncome", height = 250)
-          ),
+      
         )       
       )
    )
@@ -146,8 +154,6 @@ server <- function(input, output, session){
   
   output$summaryTable <- renderTable({
     
-    print(sets())
-    print(length(Reduce(intersect, sets())))
     inter <- length(Reduce(intersect, sets()))
     
     relate <- inter/mean(as.numeric(lapply(sets(), length)))
@@ -222,7 +228,9 @@ server <- function(input, output, session){
       summarize(
         TotalIsolates = n(),
         TotalTypes = length(unique(unlist(Otus))),
-        Dates = paste(unique(Date), collapse = '')
+        Dates = paste(unique(Date), collapse = ''),
+        Longitude = unique(Longitude),
+        Latitude = unique(Latitude)
       )
     
     locationData    
@@ -236,20 +244,28 @@ server <- function(input, output, session){
         attribution = 'Maps by <a href="http://www.mapbox.com/">Mapbox</a>'
       ) %>%
       setView(lng = -93.85, lat = 37.45, zoom = 4)
-    
-    #set circle radius to reflect the number of isolates
-    radius <- locationData()$TotalIsolates / max(locationData()$TotalIsolates) * 30000
-      
-    #set circle colour to reflect the diversity at particular location
-    colorData <- locationData()$TotalTypes/locationData()$TotalIsolates
-    pal <- colorBin("Spectral", colorData, 7, pretty = FALSE)
-    
-    leafletProxy("map", data = locationData()) %>%
-      clearShapes() %>%
-      addCircles(~Longitude, ~Latitude, radius=radius, layerId=~location,
-                 stroke=FALSE, fillOpacity=0.4, fillColor=pal(colorData)) %>%
-      addLegend("bottomleft", pal=pal, values=colorData, title=colorBy,
-                layerId="colorLegend")
+  })
+  
+  observeEvent(input$map_bounds,{
+        
+        if (!is.null(input$otuFile) & !is.null(input$isolateFile)){
+
+        #set circle radius to reflect the number of isolates
+        radius <- locationData()$TotalIsolates / max(locationData()$TotalIsolates) * 50000
+        
+        #set circle colour to reflect the diversity at particular location
+        colorData <- locationData()$TotalTypes/locationData()$TotalIsolates
+        pal <- colorBin("Spectral", colorData, 7, pretty = FALSE)
+#         
+        leafletProxy("map", data = locationData()) %>%
+          clearShapes() %>%
+          addCircles(~Longitude, ~Latitude, radius=radius, layerId=~Location,
+                     stroke=FALSE, fillOpacity=0.4, fillColor=pal(colorData)) %>%
+          addLegend("bottomleft", pal=pal, values=colorData, title="Diversity measure #OTUs/#Isolates",
+                    layerId="colorLegend")
+
+        }
+
   })
   
   # A reactive expression that returns the set of zips that are
@@ -289,16 +305,16 @@ server <- function(input, output, session){
 #   })
   
   # Show a popup at the given location
-  showLocationcodePopup <- function(location, lat, lng) {
+  showLocationPopup <- function(location, lat, lng) {
+    print(location)
+    
     selectedLocation <- locationData()[locationData()$Location == location,]
     content <- as.character(tagList(
-      tags$h4("Number of isolates:", as.integer(selectedLocation$TotalIsolates)),
-      tags$strong(HTML(sprintf("%s",
-                               selectedLocation$Location
-      ))), tags$br(),
+      tags$h4("Location:"),
+      tags$strong(HTML(sprintf("%s", selectedLocation$Location))), tags$br(),
       sprintf("Number of isolates: %s", as.integer(selectedLocation$TotalIsolates)), tags$br(),
-      sprintf("Number of types: %s%%", as.integer(selectedLocation$TotalTypes)), tags$br(),
-      sprintf("Dates: %s", selectedLocation$Dates)
+      sprintf("Number of types: %s", as.integer(selectedLocation$TotalTypes)), tags$br(),
+      sprintf("Experiment Dates: %s", selectedLocation$Dates)
     ))
     leafletProxy("map") %>% addPopups(lng, lat, content, layerId = location)
   }
@@ -311,6 +327,10 @@ server <- function(input, output, session){
       return()
     
     isolate({
+      print(event)
+      print(event$id)
+      print(event$lat)
+      print(event$lng)
       showLocationPopup(event$id, event$lat, event$lng)
     })
   })
