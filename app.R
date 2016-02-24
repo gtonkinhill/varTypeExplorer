@@ -2,6 +2,7 @@ library(shiny)
 library(data.table)
 library(VennDiagram)
 library(ggplot2)
+library(dplyr)
 
 colours5 <- c("#e41a1c","#377eb8","#4daf4a","#984ea3","#ff7f00")
 
@@ -28,7 +29,7 @@ ui <- fluidPage(
         dataTableOutput('isolateTable')
       ),
       
-      tabPanel("Venn Diagrams",
+      tabPanel("Diagrams",
         fluidPage(
           sidebarLayout(
             sidebarPanel(
@@ -43,6 +44,30 @@ ui <- fluidPage(
             )
           )
         )
+      ),
+      
+      tabPanel("Interactive Map",
+        div(class="outer",
+                   
+          tags$head(
+            # Include our custom CSS
+            includeCSS("styles.css"),
+            includeScript("gomap.js")
+          ),
+                   
+          leafletOutput("map", width="100%", height="100%"),
+                   
+          # Shiny versions prior to 0.11 should use class="modal" instead.
+          absolutePanel(id = "controls", class = "panel panel-default", fixed = TRUE,
+            draggable = TRUE, top = 60, left = "auto", right = 20, bottom = "auto",
+            width = 330, height = "auto",
+                                 
+            h2("Summary plots"),
+                                                   
+#             plotOutput("histCentile", height = 200),
+#             plotOutput("scatterCollegeIncome", height = 250)
+          ),
+        )       
       )
    )
 )
@@ -176,6 +201,119 @@ server <- function(input, output, session){
     gg <- gg + xlab("Number of isolates") + ylab("Cumulative total number of DBLalpha types")
     gg
     })
+  
+  ## Interactive Map ###########################################
+  
+  locationData <- reactive({
+    isolates <- isolateData()
+    otus <- otuData()
+    
+    otuMatrix <- as.matrix(otus[, 2:ncol(otus), with=FALSE])
+    rownames(otuMatrix) <-  otus[[1]]
+    otuMatrix[otuMatrix>0] <- 1
+    isoTotals <- apply(otuMatrix, 2, function(m){rownames(otuMatrix)[m>0]})
+    
+    isolates$Otus <- isoTotals[isolates[[1]]]
+    
+    isolates <- data.frame(isolates)
+    
+    locationData <- isolates %>%
+      group_by(Location) %>%
+      summarize(
+        TotalIsolates = n(),
+        TotalTypes = length(unique(unlist(Otus))),
+        Dates = paste(unique(Date), collapse = '')
+      )
+    
+    locationData    
+  })
+  
+  # Create the map
+  output$map <- renderLeaflet({
+    leaflet() %>%
+      addTiles(
+        urlTemplate = "//{s}.tiles.mapbox.com/v3/jcheng.map-5ebohr46/{z}/{x}/{y}.png",
+        attribution = 'Maps by <a href="http://www.mapbox.com/">Mapbox</a>'
+      ) %>%
+      setView(lng = -93.85, lat = 37.45, zoom = 4)
+    
+    #set circle radius to reflect the number of isolates
+    radius <- locationData()$TotalIsolates / max(locationData()$TotalIsolates) * 30000
+      
+    #set circle colour to reflect the diversity at particular location
+    colorData <- locationData()$TotalTypes/locationData()$TotalIsolates
+    pal <- colorBin("Spectral", colorData, 7, pretty = FALSE)
+    
+    leafletProxy("map", data = locationData()) %>%
+      clearShapes() %>%
+      addCircles(~Longitude, ~Latitude, radius=radius, layerId=~location,
+                 stroke=FALSE, fillOpacity=0.4, fillColor=pal(colorData)) %>%
+      addLegend("bottomleft", pal=pal, values=colorData, title=colorBy,
+                layerId="colorLegend")
+  })
+  
+  # A reactive expression that returns the set of zips that are
+  # in bounds right now
+  locationsInBounds <- reactive({
+    if (is.null(input$map_bounds))
+      return(locationData()[FALSE,])
+    bounds <- input$map_bounds
+    latRng <- range(bounds$north, bounds$south)
+    lngRng <- range(bounds$east, bounds$west)
+    
+    subset(locationData(),
+           Latitude >= latRng[1] & Latitude <= latRng[2] &
+             Longitude >= lngRng[1] & Longitude <= lngRng[2])
+  })
+
+#   output$histCentile <- renderPlot({
+#     # If no zipcodes are in view, don't plot
+#     if (nrow(zipsInBounds()) == 0)
+#       return(NULL)
+#     
+#     hist(zipsInBounds()$centile,
+#          breaks = centileBreaks,
+#          main = "SuperZIP score (visible zips)",
+#          xlab = "Percentile",
+#          xlim = range(allzips$centile),
+#          col = '#00DD00',
+#          border = 'white')
+#   })
+  
+#   output$scatterCollegeIncome <- renderPlot({
+#     # If no zipcodes are in view, don't plot
+#     if (nrow(zipsInBounds()) == 0)
+#       return(NULL)
+#     
+#     print(xyplot(income ~ college, data = zipsInBounds(), xlim = range(allzips$college), ylim = range(allzips$income)))
+#   })
+  
+  # Show a popup at the given location
+  showLocationcodePopup <- function(location, lat, lng) {
+    selectedLocation <- locationData()[locationData()$Location == location,]
+    content <- as.character(tagList(
+      tags$h4("Number of isolates:", as.integer(selectedLocation$TotalIsolates)),
+      tags$strong(HTML(sprintf("%s",
+                               selectedLocation$Location
+      ))), tags$br(),
+      sprintf("Number of isolates: %s", as.integer(selectedLocation$TotalIsolates)), tags$br(),
+      sprintf("Number of types: %s%%", as.integer(selectedLocation$TotalTypes)), tags$br(),
+      sprintf("Dates: %s", selectedLocation$Dates)
+    ))
+    leafletProxy("map") %>% addPopups(lng, lat, content, layerId = location)
+  }
+  
+  # When map is clicked, show a popup with city info
+  observe({
+    leafletProxy("map") %>% clearPopups()
+    event <- input$map_shape_click
+    if (is.null(event))
+      return()
+    
+    isolate({
+      showLocationPopup(event$id, event$lat, event$lng)
+    })
+  })
   
 }
 
