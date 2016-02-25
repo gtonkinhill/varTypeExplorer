@@ -40,13 +40,23 @@ ui <- fluidPage(theme = shinytheme("flatly"),
           sidebarLayout(
             sidebarPanel(
               uiOutput('vennSetCheckBox1'),
-              uiOutput('vennSetCheckBox2')
+              uiOutput('vennSetCheckBox2'),
+              radioButtons(inputId="graphType", label="Choose chart type", 
+                           choices=c(
+                             "Venn Diagram"="venn",
+                             "Frequency Plot"="freq",
+                             "Cummulative Diversity Plot"="cumDiv"),
+                           selected=character(0))
             ),
-            mainPanel(
+            mainPanel(width = 8,
                 tableOutput('summaryTable'),
-                imageOutput('vennPlot'),
-                plotOutput('frequencyPlot'),
-                plotOutput('cummulativePLot')
+                conditionalPanel(
+                  condition = "input.graphType == 'venn'", imageOutput('vennPlot', width="100%")),
+                conditionalPanel(
+                  condition = "input.graphType == 'freq'", plotOutput('frequencyPlot', width="100%")),
+                conditionalPanel(
+                  condition = "input.graphType == 'cumDiv'", plotOutput('cummulativePLot', width="100%"))
+                
             )
           )
         )
@@ -61,18 +71,21 @@ ui <- fluidPage(theme = shinytheme("flatly"),
             includeScript("gomap.js")
           ),
                    
-          leafletOutput("map", width="100%", height="100%")#,
-          
-#           # Shiny versions prior to 0.11 should use class="modal" instead.
-#           absolutePanel(id = "controls", class = "panel panel-default", fixed = TRUE,
-#                         draggable = TRUE, top = 60, left = "auto", right = 20, bottom = "auto",
-#                         width = 330, height = "auto",
-#                         
-#                         h2("Summary plots")
-#     
-# #                         plotOutput("histCentile", height = 200),
-# #                         plotOutput("scatterCollegeIncome", height = 250)
-#           )
+          leafletOutput("map", width="100%", height="100%"),
+
+          # Shiny versions prior to 0.11 should use class="modal" instead.
+          conditionalPanel(
+            condition = "clickData.clickedMarker != NULL",
+              absolutePanel(id = "controls", class = "panel panel-default", fixed = TRUE,
+                        draggable = TRUE, top = 60, left = "auto", right = 20, bottom = "auto",
+                        width = 330, height = "auto",
+                        
+                        h2("Summary plots"),
+    
+                        plotOutput("sideBarFreqPlot", height = 200),
+                        plotOutput("sideBarCumPlot", height = 250)
+            )
+          )
                    
       
         )       
@@ -158,7 +171,7 @@ server <- function(input, output, session){
     
     relate <- inter/mean(as.numeric(lapply(sets(), length)))
     
-    data.frame(Total_Isolates=length(isolates()), Total_DBLa_Types=length(otuFreqs()),
+    data.frame(Total_Isolates=length(isolates()), Total_DBLa_Types=sum(otuFreqs()$otuOccurenceCounts>0),
                Largest_OTU=max(otuFreqs()), relatedness=relate)
   })
   
@@ -171,14 +184,18 @@ server <- function(input, output, session){
     
     venn.diagram(sets, filename=outfile, imagetype="png",
                  fill=colours5[1:length(sets)],
-                 width=session$clientData$output_vennPlot_width,
-                 height=session$clientData$output_vennPlot_height,
+                 cex=1.5,
+                 cat.cex=1.5,
+                 margin=0.1,
+                 fontface = "bold",
+                 width=800, #session$clientData$output_vennPlot_width,
+                 height=600, #session$clientData$output_vennPlot_height,
                  resolution=72*session$clientData$pixelratio)
     
     list(src = outfile,
          contentType = 'image/png',
-         width = session$clientData$output_vennPlot_width,
-         height = session$clientData$output_vennPlot_height,
+         width = 800, #session$clientData$output_vennPlot_width,
+         height = 600, #session$clientData$output_vennPlot_height,
          alt = "Problem loading the image!")
     
   }, deleteFile = TRUE)
@@ -192,8 +209,10 @@ server <- function(input, output, session){
     gg <- gg + geom_histogram(binwidth=1)
     gg <- gg + theme_bw()
     gg <- gg + scale_y_sqrt()
+    gg <- gg + xlab("Number of isolates the DBLa type is observed in")
+    gg <- gg + ylab("Count of DBLa types")
     gg
-    })
+    }, height = 600, width = 800)
   
   output$cummulativePLot <- renderPlot({
     isolates <- isolates()
@@ -206,7 +225,7 @@ server <- function(input, output, session){
     gg <- gg + theme_bw() 
     gg <- gg + xlab("Number of isolates") + ylab("Cumulative total number of DBLalpha types")
     gg
-    })
+    }, height = 600, width = 800)
   
   ## Interactive Map ###########################################
   
@@ -251,7 +270,7 @@ server <- function(input, output, session){
         if (!is.null(input$otuFile) & !is.null(input$isolateFile)){
 
         #set circle radius to reflect the number of isolates
-        radius <- locationData()$TotalIsolates / max(locationData()$TotalIsolates) * 50000
+        radius <- locationData()$TotalIsolates / max(locationData()$TotalIsolates) * 150000
         
         #set circle colour to reflect the diversity at particular location
         colorData <- locationData()$TotalTypes/locationData()$TotalIsolates
@@ -270,39 +289,52 @@ server <- function(input, output, session){
   
   # A reactive expression that returns the set of zips that are
   # in bounds right now
-  locationsInBounds <- reactive({
-    if (is.null(input$map_bounds))
-      return(locationData()[FALSE,])
-    bounds <- input$map_bounds
-    latRng <- range(bounds$north, bounds$south)
-    lngRng <- range(bounds$east, bounds$west)
-    
-    subset(locationData(),
-           Latitude >= latRng[1] & Latitude <= latRng[2] &
-             Longitude >= lngRng[1] & Longitude <= lngRng[2])
-  })
+#   locationsInBounds <- reactive({
+#     if (is.null(input$map_bounds))
+#       return(locationData()[FALSE,])
+#     bounds <- input$map_bounds
+#     latRng <- range(bounds$north, bounds$south)
+#     lngRng <- range(bounds$east, bounds$west)
+#     
+#     subset(locationData(),
+#            Latitude >= latRng[1] & Latitude <= latRng[2] &
+#              Longitude >= lngRng[1] & Longitude <= lngRng[2])
+#   })
 
-#   output$histCentile <- renderPlot({
-#     # If no zipcodes are in view, don't plot
-#     if (nrow(zipsInBounds()) == 0)
-#       return(NULL)
-#     
-#     hist(zipsInBounds()$centile,
-#          breaks = centileBreaks,
-#          main = "SuperZIP score (visible zips)",
-#          xlab = "Percentile",
-#          xlim = range(allzips$centile),
-#          col = '#00DD00',
-#          border = 'white')
-#   })
+  output$sideBarFreqPlot <- renderPlot({
+    event <- input$map_shape_click
+    if (is.null(event) || is.null(clickData$clickedMarker))
+      return()
+    
+    isolates <- isolateData()[isolateData()[['Location']] %in% event$id,][[1]]
+    otuFreqs <- data.frame(otuOccurenceCounts=rowSums(otuData()[,isolates, with = FALSE]))
+        
+    gg <- ggplot(otuFreqs, aes(x=otuOccurenceCounts))
+    gg <- gg + geom_histogram(binwidth=1)
+    gg <- gg + theme_bw()
+    gg <- gg + scale_y_sqrt()
+    gg <- gg + xlab("Number of isolates the DBLa type is observed in")
+    gg <- gg + ylab("Count of DBLa types")
+    gg
+  })
   
-#   output$scatterCollegeIncome <- renderPlot({
-#     # If no zipcodes are in view, don't plot
-#     if (nrow(zipsInBounds()) == 0)
-#       return(NULL)
-#     
-#     print(xyplot(income ~ college, data = zipsInBounds(), xlim = range(allzips$college), ylim = range(allzips$income)))
-#   })
+  output$sideBarCumPlot <- renderPlot({
+    event <- input$map_shape_click
+    if (is.null(event) || is.null(clickData$clickedMarker))
+      return()
+    
+    isolates <- isolateData()[isolateData()[['Location']] %in% event$id,][[1]]
+    
+    otus <- otuData()[,isolates, with = FALSE]
+    cummulative <- data.frame(number=1:ncol(otus), cummulative=colSums(t(apply(otus, 1, cumsum))>0))
+    
+    gg <- ggplot(data=cummulative, aes(x=number, y=cummulative))
+    gg <- gg + geom_line()
+    gg <- gg + geom_point()
+    gg <- gg + theme_bw() 
+    gg <- gg + xlab("Number of isolates") + ylab("Cumulative total number of DBLalpha types")
+    gg
+  })
   
   # Show a popup at the given location
   showLocationPopup <- function(location, lat, lng) {
@@ -334,6 +366,12 @@ server <- function(input, output, session){
       showLocationPopup(event$id, event$lat, event$lng)
     })
   })
+
+  clickData <- reactiveValues(clickedMarker=NULL)
+
+  observeEvent(input$map_shape_click, {clickData$clickedMarker <- input$map_shape_click})
+
+  observeEvent(input$map_click, {clickData$clickedMarker <- NULL})
   
 }
 
